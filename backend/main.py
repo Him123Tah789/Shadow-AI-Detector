@@ -142,8 +142,8 @@ def record_event(event: EventCreate, db: Session = Depends(get_db), org_token: s
     
     # Check if tool is known for category mapping
     tool = db.query(ToolCatalog).filter(ToolCatalog.domain == event.domain).first()
-    category = tool.category if tool else event.category
-    tool_name = tool.name if tool else event.tool_name
+    category = tool.category if tool else (event.category or "unknown")
+    tool_name = tool.name if tool else (event.tool_name or "unknown")
 
     row = UsageEvent(
         org_id=org.id, domain=event.domain,
@@ -180,13 +180,24 @@ def record_event(event: EventCreate, db: Session = Depends(get_db), org_token: s
     ).scalar() or 0
     
     # Event hasn't been committed yet, so we add 1
-    if hit_count + 1 == 20: # Trigger exactly when it hits threshold
+    if hit_count >= 19: # Trigger if 20th or more
         db.add(AlertEvent(
             org_id=org.id,
             alert_type="SpikeUsage",
             severity="Medium",
             domain=event.domain,
             count_threshold=20,
+            unique_users=1,
+            timestamp=datetime.utcnow(),
+        ))
+        
+    # 3. New Tool Seen Alert
+    if not tool:
+        db.add(AlertEvent(
+            org_id=org.id,
+            alert_type="NewToolSeen",
+            severity="Low",
+            domain=event.domain,
             timestamp=datetime.utcnow(),
         ))
 
@@ -212,8 +223,8 @@ def record_events_batch(events: List[EventCreate], db: Session = Depends(get_db)
             continue
             
         tool = tools_cache.get(e.domain)
-        category = tool.category if tool else e.category
-        tool_name = tool.name if tool else e.tool_name
+        category = tool.category if tool else (e.category or "unknown")
+        tool_name = tool.name if tool else (e.tool_name or "unknown")
         
         rows.append(UsageEvent(
             org_id=org.id, domain=e.domain,
@@ -239,6 +250,16 @@ def record_events_batch(events: List[EventCreate], db: Session = Depends(get_db)
                 domain=e.domain,
                 timestamp=now,
             ))
+
+        # 3. New Tool Seen Alert (per-event check)
+        if not tool:
+            alerts.append(AlertEvent(
+                org_id=org.id,
+                alert_type="NewToolSeen",
+                severity="Low",
+                domain=e.domain,
+                timestamp=now,
+            ))
             
         # 2. Spike Usage Alert
         # Count hits in batch (real robust system would query DB + batch sum)
@@ -253,6 +274,7 @@ def record_events_batch(events: List[EventCreate], db: Session = Depends(get_db)
                 severity="Medium",
                 domain="multiple",
                 count_threshold=20,
+                unique_users=1,
                 timestamp=now,
             ))
 

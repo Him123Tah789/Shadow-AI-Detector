@@ -936,10 +936,201 @@ test("Load", "Single batch of 50 events accepted",
 
 
 # ══════════════════════════════════════════════════════
-#  8. NOTIFICATION STUBS (verify no crashes)
+#  8. LAB SETUP & ADVANCED LOG TESTS
 # ══════════════════════════════════════════════════════
 
-section("8. Notification Service")
+section("8. Lab Setup & Advanced Log Tests")
+
+# ── Test 0: Create Lab Org ──────────────────────────
+r = client.post("/api/v1/auth/register", json={
+    "email": "lab_admin@lab_org_01.com", "password": "LabPass01!", "org_name": "lab_org_01"
+})
+test("Lab", "Test 0 – Create lab_org_01 (200)",
+     r.status_code == 200, f"got {r.status_code}")
+lab_data = r.json()
+lab_token = lab_data.get("access_token", "")
+lab_org_token = lab_data.get("org_token", "")
+lab_org_id = lab_data.get("org_id", 0)
+lab_headers = {"Authorization": f"Bearer {lab_token}"}
+test("Lab", "Test 0 – Got org_token for lab_org_01",
+     len(lab_org_token) > 10, f"token={lab_org_token[:20]}...")
+
+# ── Test 1: Baseline – known domains ───────────────
+for domain in ["chat.openai.com", "claude.ai"]:
+    r = client.post("/api/v1/events", json={
+        "domain": domain,
+        "user_hash": "lab_user_01",
+        "policy_action": "allow",
+        "timestamp": datetime.utcnow().isoformat()
+    }, headers={"org-token": lab_org_token})
+    test("Lab", f"Test 1 – Baseline event for {domain} accepted (201)",
+         r.status_code == 201)
+
+# Verify via DB
+conn_lab = sqlite3.connect(TEST_DB)
+cur_lab = conn_lab.cursor()
+cur_lab.execute(
+    "SELECT domain, category FROM usage_events WHERE user_hash='lab_user_01' AND org_id=?",
+    (lab_org_id,)
+)
+lab_rows = cur_lab.fetchall()
+test("Lab", "Test 1 – Two baseline events stored",
+     len(lab_rows) == 2, f"got {len(lab_rows)}")
+for domain, category in lab_rows:
+    test("Lab", f"Test 1 – {domain} category is 'chat'",
+         category == "chat", f"got category={category}")
+
+# ── Test 2: Policy Enforcement ─────────────────────
+# Get tool IDs
+r = client.get("/api/v1/tools", headers=lab_headers)
+lab_tools = {t["domain"]: t["id"] for t in r.json()}
+
+# Allow chat.openai.com
+r = client.put("/api/v1/policy", json={
+    "tool_id": lab_tools["chat.openai.com"], "action": "allow"
+}, headers=lab_headers)
+test("Lab", "Test 2 – Allow policy created", r.status_code == 200)
+
+# Warn on claude.ai
+r = client.put("/api/v1/policy", json={
+    "tool_id": lab_tools["claude.ai"], "action": "warn"
+}, headers=lab_headers)
+test("Lab", "Test 2 – Warn policy created", r.status_code == 200)
+
+# Block on midjourney.com
+r = client.put("/api/v1/policy", json={
+    "tool_id": lab_tools["midjourney.com"], "action": "block"
+}, headers=lab_headers)
+test("Lab", "Test 2 – Block policy created", r.status_code == 200)
+
+# Get policy sync to retrieve rule IDs
+r = client.get("/api/v1/policy/sync", headers={"org-token": lab_org_token})
+lab_policy_sync = r.json().get("policies", {})
+
+# Send events with policy_action and policy_rule_id
+for domain, expected_action in [("chat.openai.com", "allow"), ("claude.ai", "warn"), ("midjourney.com", "block")]:
+    rule_id = lab_policy_sync.get(domain, {}).get("rule_id")
+    r = client.post("/api/v1/events", json={
+        "domain": domain,
+        "user_hash": "lab_user_01",
+        "policy_action": expected_action,
+        "policy_rule_id": rule_id,
+        "timestamp": datetime.utcnow().isoformat()
+    }, headers={"org-token": lab_org_token})
+    test("Lab", f"Test 2 – {expected_action} event for {domain} accepted",
+         r.status_code == 201)
+
+# Verify policy_action and policy_rule_id via DB
+cur_lab.execute(
+    "SELECT domain, policy_action, policy_rule_id FROM usage_events "
+    "WHERE user_hash='lab_user_01' AND org_id=? AND policy_rule_id IS NOT NULL",
+    (lab_org_id,)
+)
+policy_rows = cur_lab.fetchall()
+test("Lab", "Test 2 – 3 events with policy_rule_id stored",
+     len(policy_rows) == 3, f"got {len(policy_rows)}")
+for domain, action, rule_id in policy_rows:
+    test("Lab", f"Test 2 – {domain} has rule_id set",
+         rule_id is not None and rule_id > 0, f"rule_id={rule_id}")
+
+# ── Test 3: Unknown Tool Detection ─────────────────
+# Use a domain NOT in the seed catalog
+unknown_domain = "unknowntool-lab.example.com"
+r = client.post("/api/v1/events", json={
+    "domain": unknown_domain,
+    "user_hash": "lab_user_01",
+    "policy_action": "allow",
+    "timestamp": datetime.utcnow().isoformat()
+}, headers={"org-token": lab_org_token})
+test("Lab", "Test 3 – Unknown tool event accepted (201)",
+     r.status_code == 201)
+
+# Verify category == 'unknown'
+cur_lab.execute(
+    "SELECT category, tool_name FROM usage_events WHERE domain=? AND org_id=?",
+    (unknown_domain, lab_org_id)
+)
+unk_row = cur_lab.fetchone()
+test("Lab", "Test 3 – Unknown domain category is 'unknown'",
+     unk_row is not None and unk_row[0] == "unknown",
+     f"got category={unk_row[0] if unk_row else 'N/A'}")
+test("Lab", "Test 3 – Unknown domain tool_name is 'unknown'",
+     unk_row is not None and unk_row[1] == "unknown",
+     f"got tool_name={unk_row[1] if unk_row else 'N/A'}")
+
+# Verify NewToolSeen alert
+cur_lab.execute(
+    "SELECT alert_type, severity, domain FROM alert_events "
+    "WHERE org_id=? AND alert_type='NewToolSeen' AND domain=?",
+    (lab_org_id, unknown_domain)
+)
+nts_alert = cur_lab.fetchone()
+test("Lab", "Test 3 – NewToolSeen alert exists",
+     nts_alert is not None, f"got {nts_alert}")
+test("Lab", "Test 3 – NewToolSeen severity is 'Low'",
+     nts_alert is not None and nts_alert[1] == "Low",
+     f"severity={nts_alert[1] if nts_alert else 'N/A'}")
+
+# ── Test 4: Spike Usage ────────────────────────────
+spike_events = []
+for i in range(20):
+    spike_events.append({
+        "domain": "chatgpt.com",
+        "user_hash": "lab_user_01",
+        "policy_action": "allow",
+        "timestamp": datetime.utcnow().isoformat()
+    })
+r = client.post("/api/v1/events/batch", json=spike_events,
+                 headers={"org-token": lab_org_token})
+test("Lab", "Test 4 – 20-event spike batch accepted (201)",
+     r.status_code == 201 and r.json().get("count") == 20,
+     f"got {r.json()}")
+
+# Verify SpikeUsage alert
+cur_lab.execute(
+    "SELECT alert_type, severity, count_threshold FROM alert_events "
+    "WHERE org_id=? AND alert_type='SpikeUsage'",
+    (lab_org_id,)
+)
+spike_alert = cur_lab.fetchone()
+test("Lab", "Test 4 – SpikeUsage alert exists",
+     spike_alert is not None, f"got {spike_alert}")
+test("Lab", "Test 4 – SpikeUsage severity is 'Medium'",
+     spike_alert is not None and spike_alert[1] == "Medium",
+     f"severity={spike_alert[1] if spike_alert else 'N/A'}")
+test("Lab", "Test 4 – SpikeUsage threshold is 20",
+     spike_alert is not None and spike_alert[2] == 20,
+     f"threshold={spike_alert[2] if spike_alert else 'N/A'}")
+
+# ── Test 5: Offline Retry (4h-old timestamp) ───────
+four_hours_ago = (datetime.utcnow() - timedelta(hours=4)).isoformat()
+r = client.post("/api/v1/events", json={
+    "domain": "perplexity.ai",
+    "user_hash": "lab_user_01",
+    "policy_action": "allow",
+    "timestamp": four_hours_ago
+}, headers={"org-token": lab_org_token})
+test("Lab", "Test 5 – Offline retry (4h ago) accepted (201)",
+     r.status_code == 201)
+
+# Verify the event stored with the original timestamp
+cur_lab.execute(
+    "SELECT domain, timestamp FROM usage_events "
+    "WHERE user_hash='lab_user_01' AND domain='perplexity.ai' AND org_id=?",
+    (lab_org_id,)
+)
+offline_row = cur_lab.fetchone()
+test("Lab", "Test 5 – Offline event stored successfully",
+     offline_row is not None, f"got {offline_row}")
+
+conn_lab.close()
+
+
+# ══════════════════════════════════════════════════════
+#  9. NOTIFICATION STUBS (verify no crashes)
+# ══════════════════════════════════════════════════════
+
+section("9. Notification Service")
 
 from notification_service import send_breach_email, send_reminder_email, send_telegram_alert
 
@@ -957,10 +1148,10 @@ test("Notifications", "send_telegram_alert (stub) does not crash",
 
 
 # ═══════════════════════════════════════════════════════
-#  9. DELETE / CLEANUP ENDPOINTS
+#  10. DELETE / CLEANUP ENDPOINTS
 # ═══════════════════════════════════════════════════════
 
-section("9. Delete / Cleanup")
+section("10. Delete / Cleanup")
 
 # Remove monitored email
 r = client.delete(f"/api/v1/breach/monitored-email/{monitored_email_id}",
@@ -995,10 +1186,10 @@ if total_fail > 0:
     print()
 
 # ══════════════════════════════════════════════════════
-#  10. FEATURE GAP NOTES
+#  11. FEATURE GAP NOTES
 # ══════════════════════════════════════════════════════
 
-section("10. Feature Gap Notes (not errors — recommendations)")
+section("11. Feature Gap Notes (not errors — recommendations)")
 
 print("  📝 Rate Limiting: NOT implemented. Recommended for production.")
 print("  📝 Domain Format Validation: No regex check on 'domain' field.")
