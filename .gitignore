@@ -1,0 +1,30 @@
+# Node
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# Environment
+.env
+.env.local
+
+# Dashboard configs
+dashboard/.next/
+dashboard/node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# DB Data if local
+/pgdata/

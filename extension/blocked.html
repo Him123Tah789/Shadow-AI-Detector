@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Access Blocked — Shadow AI Detector</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(145deg, #0f172a 0%, #1e1b4b 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #e2e8f0;
+    }
+
+    .card {
+      background: rgba(30, 41, 59, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(99, 102, 241, .25);
+      border-radius: 16px;
+      padding: 48px 40px;
+      max-width: 480px;
+      text-align: center;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, .4);
+    }
+
+    .icon {
+      font-size: 56px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #f87171;
+      margin-bottom: 12px;
+    }
+
+    p {
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+
+    .domain {
+      display: inline-block;
+      background: rgba(248, 113, 113, .15);
+      color: #fca5a5;
+      padding: 4px 14px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 14px;
+      margin: 8px 0 20px;
+    }
+
+    .alt-box {
+      background: rgba(74, 222, 128, .1);
+      border: 1px solid rgba(74, 222, 128, .2);
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 20px;
+    }
+
+    .alt-box h3 {
+      color: #4ade80;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .alt-box a {
+      color: #86efac;
+      text-decoration: underline;
+      font-size: 15px;
+      word-break: break-all;
+    }
+
+    .footer {
+      margin-top: 28px;
+      font-size: 11px;
+      color: #475569;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <div class="icon">🛡️</div>
+    <h1>Access Blocked</h1>
+    <p>The AI tool you tried to access is <strong>not approved</strong> by your organization's security policy.</p>
+    <div class="domain" id="blockedDomain">—</div>
+    <div class="alt-box" id="altBox" style="display:none;">
+      <h3>✅ Approved Alternative</h3>
+      <a id="altLink" href="#" target="_blank"></a>
+    </div>
+    <p class="footer">Shadow AI Detector · Domain-level monitoring only · No content captured</p>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const domain = params.get("domain");
+    const alt = params.get("alt");
+    if (domain) document.getElementById("blockedDomain").textContent = domain;
+    if (alt && alt !== "null" && alt !== "") {
+      const box = document.getElementById("altBox");
+      const link = document.getElementById("altLink");
+      box.style.display = "block";
+      link.textContent = alt;
+      link.href = "https://" + alt;
+    }
+  </script>
+</body>
+
+</html>
