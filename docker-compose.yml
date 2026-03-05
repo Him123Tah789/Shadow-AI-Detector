@@ -17,6 +17,16 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: ./backend
     ports:
@@ -24,8 +34,36 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-shadow_user}:${POSTGRES_PASSWORD:-shadow_password}@db/${POSTGRES_DB:-shadow_db}
       - SECRET_KEY=${SECRET_KEY:-supersecretkey_change_in_production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - BREACH_CHECKER=${BREACH_CHECKER:-mock}
+      - HIBP_API_KEY=${HIBP_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-alerts@shieldops.app}
     depends_on:
       db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: python worker.py
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-shadow_user}:${POSTGRES_PASSWORD:-shadow_password}@db/${POSTGRES_DB:-shadow_db}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - BREACH_CHECKER=${BREACH_CHECKER:-mock}
+      - HIBP_API_KEY=${HIBP_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-alerts@shieldops.app}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 

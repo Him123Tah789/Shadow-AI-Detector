@@ -10,11 +10,18 @@ let eventQueue = [];   // offline batch queue
 // ── Config stored in chrome.storage.local ─────────
 async function getConfig() {
     return new Promise((resolve) => {
-        chrome.storage.local.get(["orgToken", "userHash", "policies"], (r) => {
+        chrome.storage.local.get(["orgToken", "userHash", "policies", "deviceHash"], (r) => {
+            let deviceHash = r.deviceHash;
+            if (!deviceHash) {
+                deviceHash = crypto.randomUUID().replace(/-/g, '');
+                chrome.storage.local.set({ deviceHash });
+            }
+
             resolve({
                 orgToken: r.orgToken || "",
                 userHash: r.userHash || "",
                 policies: r.policies || {},
+                deviceHash: deviceHash,
             });
         });
     });
@@ -79,6 +86,7 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 // ── Enforcement ───────────────────────────────────
 function handlePolicy(domain, policy, tabId, cfg) {
     const action = policy.action || "allow";
+    const ruleId = policy.rule_id || null;
 
     if (action === "block") {
         const alt = policy.alternative || "";
@@ -97,12 +105,30 @@ function handlePolicy(domain, policy, tabId, cfg) {
         }).catch(() => { });
     }
 
+    // Capture metadata
+    const manifest = chrome.runtime.getManifest();
+    let browserName = "Chrome";
+    let version = "unknown";
+
+    // Attempt naive browser parsing
+    const ua = navigator.userAgent;
+    if (ua.includes("Edg/")) {
+        browserName = "Edge";
+        version = ua.split("Edg/")[1].split(" ")[0];
+    } else if (ua.includes("Chrome/")) {
+        version = ua.split("Chrome/")[1].split(" ")[0];
+    }
+
     // Queue event (never captures page content — only domain)
     eventQueue.push({
         domain,
         user_hash: cfg.userHash,
         action_taken: action,
         timestamp: new Date().toISOString(),
+        device_id_hash: cfg.deviceHash,
+        policy_rule_id: ruleId,
+        browser: `${browserName} ${version}`,
+        extension_version: manifest.version,
     });
 
     // Immediate flush attempt if queue has 5+ items
@@ -132,9 +158,13 @@ function showWarnBanner(domain, alternative) {
 }
 
 // ── Event batching & retry ────────────────────────
+let isFlushing = false;
 async function flushQueue(orgToken) {
-    if (!eventQueue.length || !orgToken) return;
-    const batch = eventQueue.splice(0, 50);      // max 50 per flush
+    if (!eventQueue.length || !orgToken || isFlushing) return;
+
+    isFlushing = true;
+    const batch = [...eventQueue.slice(0, 50)];  // grab a copy of top 50 
+
     try {
         const res = await fetch(`${API_BASE}/events/batch`, {
             method: "POST",
@@ -145,9 +175,14 @@ async function flushQueue(orgToken) {
             body: JSON.stringify(batch),
         });
         if (!res.ok) throw new Error(res.status);
+
+        // If HTTP 2xx, safely remove the batch we just sent
+        eventQueue.splice(0, batch.length);
+
     } catch (_) {
-        // Push back for retry on next alarm tick
-        eventQueue.unshift(...batch);
+        // Leave the items in the queue (offline mode or server down)
+    } finally {
+        isFlushing = false;
     }
 }
 

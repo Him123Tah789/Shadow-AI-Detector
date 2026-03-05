@@ -1,129 +1,164 @@
-# 🛡️ Shadow AI Detector (Org) — MVP
+# 🛡️ ShieldOps — Shadow AI Detector + Breach Monitor
 
-**Privacy-first, domain-level AI usage monitoring for organizations.**
+A combined SaaS MVP with two modules:
 
-Detects when employees visit unapproved AI tools (ChatGPT, Claude, Midjourney, etc.) and enforces Allow/Warn/Block policies — without ever capturing prompts, typed text, files, or page content.
+| Module | Target | What it does |
+|--------|--------|-------------|
+| **A — Shadow AI Detector** (B2B) | IT Admins, CISOs | Domain-level detection of unapproved AI tools with allow/warn/block policies. Privacy-first: NEVER captures prompts, text, or files. |
+| **B — Breach Monitor + Recovery Kit** (B2C) | Individuals / Employees | Monitor emails for data breaches, get alerts, follow guided step-by-step recovery checklists with progress tracking. NO passwords stored. |
 
-## Architecture
+---
 
-| Component | Tech | Port |
-|-----------|------|------|
-| **Backend API** | Python / FastAPI / SQLAlchemy | `8000` |
-| **Database** | PostgreSQL 15 | `5432` |
-| **Dashboard** | Next.js 14 / TypeScript / Tailwind / Recharts | `3000` |
-| **Extension** | Chrome/Edge Manifest V3 | — |
+## 🚀 Quick Start
 
-## Quick Start
+### Docker (recommended)
 
-### Option A — Docker Compose (recommended)
 ```bash
-cp .env.example .env   # edit secrets as needed
+# 1. Copy env file
+cp .env.example .env
+
+# 2. Start everything
 docker-compose up --build
+
+# Services:
+#   Backend API:  http://localhost:8000
+#   Dashboard:    http://localhost:3000
+#   PostgreSQL:   localhost:5432
+#   Redis:        localhost:6379
 ```
-- Dashboard → http://localhost:3000
-- API docs → http://localhost:8000/docs
 
-### Option B — Local development
+### Local Development
 
-**Backend:**
 ```bash
+# Backend
 cd backend
 pip install -r requirements.txt
-# Make sure PostgreSQL is running locally
-export DATABASE_URL=postgresql://shadow_user:shadow_password@localhost/shadow_db
 uvicorn main:app --reload
-```
+# → http://localhost:8000
 
-**Dashboard:**
-```bash
+# Dashboard
 cd dashboard
 npm install
 npm run dev
+# → http://localhost:3000
+
+# Worker (background jobs)
+cd backend
+python worker.py
+
+# Extension
+# Load extension/ folder in chrome://extensions (Developer mode)
 ```
 
-**Extension:**
-1. Open `chrome://extensions` in Chrome or `edge://extensions` in Edge.
-2. Enable "Developer mode".
-3. Click "Load unpacked" → select the `extension/` folder.
-4. Click the extension icon → enter your Org Token (from registration).
+---
 
-## Getting Started
-
-1. Start backend + DB (Docker or local).
-2. Open http://localhost:3000/login and **Register** a new org.
-3. Note the **Org Token** shown in the dashboard sidebar.
-4. Load the browser extension and paste the Org Token into the popup.
-5. Visit any AI tool domain → the extension will enforce policies and log events.
-6. Configure policies on the Policies page and see analytics populate on Overview.
-
-## Project Structure
+## 📁 Project Structure
 
 ```
-Shadow AI/
-├── backend/
-│   ├── main.py            # FastAPI app with all routes
-│   ├── models.py          # SQLAlchemy ORM models
-│   ├── schemas.py         # Pydantic request/response schemas
-│   ├── auth.py            # JWT + password utilities
-│   ├── database.py        # DB session management
-│   ├── seed.py            # 25 pre-loaded AI tool domains
+ShieldOps/
+├── backend/                  # FastAPI + PostgreSQL
+│   ├── main.py              # 30+ API endpoints (auth, events, policy, breach, recovery, score)
+│   ├── models.py            # 14 SQLAlchemy tables (6 Module A + 8 Module B)
+│   ├── schemas.py           # All Pydantic request/response models
+│   ├── auth.py              # JWT + password hashing + RBAC
+│   ├── database.py          # DB connection
+│   ├── seed.py              # 25 pre-loaded AI tool domains
+│   ├── breach_service.py    # Pluggable breach checker (HIBP / Mock)
+│   ├── recovery_templates.py# Recovery task templates for 7 platforms
+│   ├── notification_service.py # Email + Telegram (stub) notifications
+│   ├── crypto_utils.py      # AES-256 email encryption + hashing
+│   ├── worker.py            # Background scheduler (breach checks, cleanup, reminders)
 │   ├── requirements.txt
 │   └── Dockerfile
-├── dashboard/
+│
+├── dashboard/                # Next.js + Tailwind + Recharts
 │   ├── app/
-│   │   ├── login/page.tsx
-│   │   ├── dashboard/
-│   │   │   ├── page.tsx         # Overview with charts
-│   │   │   ├── policies/page.tsx
-│   │   │   ├── tools/page.tsx
-│   │   │   ├── audit/page.tsx
-│   │   │   └── layout.tsx       # Sidebar nav
-│   │   ├── layout.tsx
-│   │   └── globals.css
+│   │   ├── login/           # Auth page (Org + Personal tabs)
+│   │   ├── dashboard/       # Module A: overview, policies, tools, audit
+│   │   └── personal/        # Module B: overview, emails, breaches, recovery, score
 │   ├── lib/
-│   │   ├── api.ts         # API client + auth helpers
-│   │   └── hooks.ts       # useApi data fetching hook
-│   ├── components/
-│   │   └── AuthGuard.tsx
-│   ├── Dockerfile
-│   └── package.json
-├── extension/
+│   │   ├── api.ts           # Centralized API client (30+ functions)
+│   │   └── hooks.ts         # useApi custom hook
+│   └── ...
+│
+├── extension/                # Chrome/Edge MV3 Extension
 │   ├── manifest.json
-│   ├── background.js      # Domain detection + policy enforcement
-│   ├── popup.html / popup.js
-│   ├── blocked.html
-│   └── icons/
-├── docker-compose.yml
+│   ├── background.js        # Domain detection, policy caching, event queue
+│   ├── popup.html/js        # Config UI
+│   └── blocked.html         # Block page
+│
+├── docker-compose.yml        # PostgreSQL + Redis + Backend + Worker + Dashboard
 ├── .env.example
 └── ARCHITECTURE-AND-PLAN.md
 ```
 
-## Privacy Guarantees
+---
 
-- ✅ Only collects: `domain`, `timestamp`, `org_id`, `user_hash`
-- ❌ Never collects: prompts, typed text, clipboard, screenshots, page content, files
-- 🔒 User identity is a one-way hash — no emails or names stored in events
-- 📅 30-day retention policy (configurable)
+## 🔌 API Endpoints
 
-## API Endpoints
+### Module A — Shadow AI Detector
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| POST | `/api/v1/auth/register` | — | Register org + admin |
-| POST | `/api/v1/auth/login` | — | Get JWT token |
-| POST | `/api/v1/events` | Org-Token | Log single event |
-| POST | `/api/v1/events/batch` | Org-Token | Log batch of events |
-| GET | `/api/v1/policy/sync` | Org-Token | Extension policy cache |
-| GET | `/api/v1/policy` | JWT | List policies |
-| PUT | `/api/v1/policy` | JWT (Admin) | Create/update policy |
-| DELETE | `/api/v1/policy/{id}` | JWT (Admin) | Remove policy |
-| GET | `/api/v1/tools` | JWT | List AI tool catalog |
-| GET | `/api/v1/analytics/summary` | JWT | KPI summary |
-| GET | `/api/v1/analytics/top-tools` | JWT | Top used tools |
-| GET | `/api/v1/analytics/trends` | JWT | Daily usage trend |
-| GET | `/api/v1/analytics/risk` | JWT | Risk by category |
-| GET | `/api/v1/audit-logs` | JWT | Admin action history |
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/auth/register` | Register org admin |
+| `POST` | `/api/v1/auth/login` | Login org admin |
+| `POST` | `/api/v1/events` | Record usage event (extension) |
+| `POST` | `/api/v1/events/batch` | Batch record events |
+| `GET` | `/api/v1/policy/sync` | Get policies for extension |
+| `GET/PUT/DEL` | `/api/v1/policy` | Policy CRUD |
+| `GET` | `/api/v1/tools` | Tool catalog |
+| `GET` | `/api/v1/analytics/*` | Summary, top-tools, trends, risk |
+| `GET` | `/api/v1/audit-logs` | Admin action history |
 
-## License
+### Module B — Breach Monitor + Recovery Kit
 
-MIT
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/personal/auth/register` | Register personal user |
+| `POST` | `/api/v1/personal/auth/login` | Login personal user |
+| `POST` | `/api/v1/breach/monitor-email` | Add email to monitor |
+| `GET` | `/api/v1/breach/monitored-emails` | List monitored emails |
+| `DELETE` | `/api/v1/breach/monitored-email/{id}` | Remove email |
+| `GET` | `/api/v1/breach/status` | Get all breaches |
+| `POST` | `/api/v1/breach/run-check` | Trigger breach check |
+| `GET` | `/api/v1/recovery/platforms` | List supported platforms |
+| `POST` | `/api/v1/recovery/plan` | Create recovery plan |
+| `GET` | `/api/v1/recovery/plans` | List all plans |
+| `GET` | `/api/v1/recovery/plan/{id}` | Get plan detail |
+| `PATCH` | `/api/v1/recovery/task/{id}` | Toggle task completion |
+| `GET` | `/api/v1/security-score` | Get security score |
+| `GET` | `/api/v1/security-score/history` | Score history |
+
+---
+
+## 🔒 Privacy & Security
+
+- **Module A**: Only stores `domain`, `timestamp`, `org_id`, `user_hash` — NEVER prompts, text, or files
+- **Module B**: Emails encrypted with AES-256-GCM at rest. NO passwords stored. Only task completion timestamps tracked.
+- **User hashing**: SHA-256 one-way hash — irreversible
+- **JWT auth**: 24h expiry, HMAC-SHA256
+- **RBAC**: Admin/Viewer roles (org), personal user isolation (breach monitor)
+- **Replay protection**: Events >24h old are rejected
+- **Retention**: Usage events auto-deleted after 30 days
+
+---
+
+## 🔧 Configuration
+
+See `.env.example` for all environment variables. Key settings:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BREACH_CHECKER` | `mock` | `mock` for testing, `hibp` for real HIBP API |
+| `HIBP_API_KEY` | — | Required if `BREACH_CHECKER=hibp` ($3.50/mo) |
+| `ENCRYPTION_KEY` | auto-gen | 32-byte base64 key for email encryption |
+| `SMTP_HOST` | — | SMTP server for email notifications |
+
+---
+
+## 💰 Monetization
+
+| Module | Model | Pricing |
+|--------|-------|---------|
+| **A — Shadow AI** | B2B per-seat | $1–$3/user/month |
+| **B — Breach Monitor** | Freemium | 1 email free → paid for more |

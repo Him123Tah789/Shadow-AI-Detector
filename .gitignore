@@ -28,3 +28,7 @@ dashboard/node_modules/
 
 # DB Data if local
 /pgdata/
+*.db
+*.resolved
+*.md.resolved
+
